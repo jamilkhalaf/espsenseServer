@@ -1,3 +1,4 @@
+
 from flask import Flask, request
 import requests
 import os
@@ -10,12 +11,29 @@ TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 UPLOAD_FOLDER = "uploads"
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
-# Track last message ID to avoid repeat
+# Track triggers
 last_message_id = None
+manual_triggered = False
+
+
+@app.route("/trigger", methods=["POST"])
+def manual_trigger():
+    global manual_triggered
+    manual_triggered = True
+    print("✅ Manual trigger set.")
+    return "OK", 200
+
 
 @app.route("/ready")
-def check_for_text_trigger():
-    global last_message_id
+def check_for_trigger():
+    global last_message_id, manual_triggered
+
+    # ✅ Prioritize manual trigger
+    if manual_triggered:
+        manual_triggered = False
+        print("📸 Manual trigger activated via /ready")
+        return "OK", 200
+
     try:
         updates = requests.get(f"{TELEGRAM_API}/getUpdates").json()
         messages = updates.get("result", [])
@@ -25,15 +43,19 @@ def check_for_text_trigger():
         latest = messages[-1]
         msg_id = latest["message"]["message_id"]
 
-        # If new message and it's text
+        print(f"Latest msg_id: {msg_id} | Last seen: {last_message_id}")
+
         if msg_id != last_message_id and "text" in latest["message"]:
             last_message_id = msg_id
             print("📩 New Telegram message received, telling ESP32 to capture")
             return "OK", 200
-        return "No trigger", 204
+
+        return "No new trigger", 204
+
     except Exception as e:
         print("⚠️ Error polling Telegram:", e)
         return "Error", 500
+
 
 @app.route("/upload", methods=["POST"])
 def handle_upload():
@@ -51,6 +73,7 @@ def handle_upload():
             data={"chat_id": CHAT_ID},
             files={"photo": photo}
         )
+
     if res.ok:
         print("📸 Image sent to Telegram")
         return "OK", 200
@@ -58,3 +81,6 @@ def handle_upload():
         print("❌ Telegram error:", res.text)
         return "Fail", 500
 
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5050)
